@@ -256,6 +256,8 @@ def collaborator_private_attributes(
         return {
             "train_csv": train_csv,
             "val_csv": valid_csv,
+            "train_loader": None,
+            "val_loader": None,
             "gandlf_config": gandlf_config,
             "device": device,
             "training_hyper_parameters_for_round": training_hyper_parameters_for_round
