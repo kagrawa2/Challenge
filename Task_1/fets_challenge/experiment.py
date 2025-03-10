@@ -322,7 +322,7 @@ def run_challenge_experiment(aggregation_function,
 
     aggregator = Aggregator(name="aggregator",
                             private_attributes_callable=aggregator_private_attributes,
-                            num_cpus=0.0,
+                            num_cpus=4.0,
                             num_gpus=0.0,
                             uuid='aggregator',
                             round_number=rounds_to_train,
@@ -352,7 +352,7 @@ def run_challenge_experiment(aggregation_function,
                 # If 1 GPU is available in the machine
                 # Set `num_gpus=0.0` to `num_gpus=0.3` to run on GPU
                 # with ray backend with 2 collaborators
-                num_cpus=0.0,
+                num_cpus=4.0,
                 num_gpus=0.0,
                 # arguments required to pass to callable
                 index=idx,
@@ -366,7 +366,7 @@ def run_challenge_experiment(aggregation_function,
         )
 
     local_runtime = LocalRuntime(
-        aggregator=aggregator, collaborators=collaborators, backend="single_process"
+        aggregator=aggregator, collaborators=collaborators, backend="ray", num_actors=4
     )
 
     logger.info(f"Local runtime collaborators = {local_runtime.collaborators}")
@@ -388,7 +388,7 @@ def run_challenge_experiment(aggregation_function,
 
     flflow = FeTSFederatedFlow(
         model,
-        1
+        rounds_to_train
     )
 
     flflow.runtime = local_runtime

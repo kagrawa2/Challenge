@@ -526,7 +526,7 @@ include_validation_with_hausdorff=True
 institution_split_csv_filename = 'small_split.csv'
 
 # change this to point to the parent directory of the data
-brats_training_data_parent_dir = '/home/ad_kagrawa2/Data/fedAI/MICCAI_FeTS2022_TrainingData'
+brats_training_data_parent_dir = '/home/ad_kagrawa2/Data/MICCAI_FeTS2022_TrainingData'
 
 # increase this if you need a longer history for your algorithms
 # decrease this if you need to reduce system RAM consumption
@@ -537,7 +537,7 @@ device = 'cpu'
 
 # you'll want to increase this most likely. You can set it as high as you like, 
 # however, the experiment will exit once the simulated time exceeds one week. 
-rounds_to_train = 1
+rounds_to_train = 10
 
 # (bool) Determines whether checkpoints should be saved during the experiment. 
 # The checkpoints can grow quite large (5-10GB) so only the latest will be saved when this parameter is enabled
