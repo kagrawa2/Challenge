@@ -518,7 +518,7 @@ training_hyper_parameters_for_round = constant_hyper_parameters
 # to those you specify immediately above. Changing the below value to False will change 
 # this fact, excluding the three hausdorff measurements. As hausdorff distance is 
 # expensive to compute, excluding them will speed up your experiments.
-include_validation_with_hausdorff=True
+include_validation_with_hausdorff=False
 
 # We encourage participants to experiment with partitioning_1 and partitioning_2, as well as to create
 # other partitionings to test your changes for generalization to multiple partitionings.
@@ -537,7 +537,7 @@ device = 'cpu'
 
 # you'll want to increase this most likely. You can set it as high as you like, 
 # however, the experiment will exit once the simulated time exceeds one week. 
-rounds_to_train = 10
+rounds_to_train = 2
 
 # (bool) Determines whether checkpoints should be saved during the experiment. 
 # The checkpoints can grow quite large (5-10GB) so only the latest will be saved when this parameter is enabled

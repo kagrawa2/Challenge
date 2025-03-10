@@ -108,7 +108,7 @@ class FeTSChallengeModel():
         # else:
         #     self.set_tensor_dict(input_tensor_dict, with_opt_vars=False)
 
-    def validate(self, col_name, round_num, use_tqdm=False, **kwargs):
+    def validate(self, col_name, round_num, val_loader, use_tqdm=False, **kwargs):
         """Validate.
         Run validation of the model on the local data.
         Args:
@@ -128,7 +128,7 @@ class FeTSChallengeModel():
 
         epoch_valid_loss, epoch_valid_metric = validate_network(
             self.model,
-            self.val_loader,
+            val_loader,
             self.scheduler,
             self.params,
             round_num,
@@ -165,7 +165,7 @@ class FeTSChallengeModel():
         # Empty list represents metrics that should only be stored locally
         return output_tensor_dict, {}
 
-    def train(self, col_name, round_num, hparams_dict, use_tqdm=False, **kwargs):
+    def train(self, col_name, round_num, hparams_dict, train_loader, use_tqdm=False, **kwargs):
         """Train batches.
         Train the model on the requested number of batches.
         Args:
@@ -202,7 +202,7 @@ class FeTSChallengeModel():
             # rather than simply taking the last value?
             epoch_train_loss, epoch_train_metric = train_network(
                 self.model,
-                self.train_loader,
+                train_loader,
                 self.optimizer,
                 self.params,
             )

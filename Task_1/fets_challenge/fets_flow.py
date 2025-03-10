@@ -52,7 +52,7 @@ class FeTSFederatedFlow(FLSpec):
         super().__init__(**kwargs)
         self.fets_model = fets_model
         self.n_rounds = rounds
-        self.current_round = 1
+        self.current_round = 0
         self.testing_coll = 0
 
     @aggregator
@@ -65,6 +65,7 @@ class FeTSFederatedFlow(FLSpec):
         logger.info(f'save_checkpoints: {self.save_checkpoints}')
         logger.info(f'collaborator_time_stats: {self.collaborator_time_stats}')
         logger.info(f'restore_from_checkpoint_folder: {self.restore_from_checkpoint_folder}')
+        logger.info(f'include_validation_with_hausdorff: {self.include_validation_with_hausdorff}')
 
         self.experiment_results = {
             'round':[],
@@ -165,7 +166,7 @@ class FeTSFederatedFlow(FLSpec):
         #                                                         collaborator_time_stats,
         #                                                         round_num)
         
-        if self.current_round == 1 or self.restored:
+        if self.current_round == 0 or self.restored:
             logger.info('[Next Step] : Initializing collaborators')
             self.next(self.initialize_colls, foreach='collaborators')
         else:
@@ -196,8 +197,11 @@ class FeTSFederatedFlow(FLSpec):
         self.fets_model.scheduler = scheduler
         self.fets_model.params = params
         self.fets_model.device = self.device
-        self.fets_model.train_loader = train_loader
-        self.fets_model.val_loader = val_loader
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+
+        print(f'[start] Train Loader {self.train_loader}')
+        print(f'[start] Validation Loader {self.val_loader}')
 
         logger.info(f'Initializing tensors for collaborator {self.input}')
         self.agg_tensor_dict = self.fets_model.get_tensor_dict(self.fets_model.model)
@@ -208,8 +212,9 @@ class FeTSFederatedFlow(FLSpec):
         validation_start_time = time.time()
         logger.info(f'Performing aggregated model validation for collaborator {self.input}')
         input_tensor_dict = deepcopy(self.agg_tensor_dict)
+        print(f'[aggregated_model_validation] Validation Loader {self.val_loader}')
         self.fets_model.rebuild_model(self.fets_model.model, self.current_round, input_tensor_dict)
-        self.agg_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, apply="global")
+        self.agg_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, self.val_loader, apply="global")
         validation_end_time = time.time()
         self.aggregated_model_validation_time = validation_end_time - validation_start_time
         print(f'Collaborator {self.input} took {self.aggregated_model_validation_time} seconds for agg validation')
@@ -218,8 +223,9 @@ class FeTSFederatedFlow(FLSpec):
     @collaborator
     def train(self):
         logger.info(f'Performing training for collaborator {self.input}')
+        print(f'[train] Train Loader {self.train_loader}')
         training_start_time = time.time()
-        self.global_output_tensor_dict, _ =  self.fets_model.train(self.input, self.current_round, self.hparam_dict)
+        self.global_output_tensor_dict, _ =  self.fets_model.train(self.input, self.current_round, self.hparam_dict, self.train_loader)
         training_end_time = time.time()
         self.training_time = training_end_time - training_start_time
         print(f'Collaborator {self.input} took {self.training_time} seconds for training')
@@ -229,7 +235,8 @@ class FeTSFederatedFlow(FLSpec):
     def local_model_validation(self):
         validation_start_time = time.time()
         logger.info(f'Performing local model validation for collaborator {self.input}')
-        self.local_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, apply="local")
+        print(f'[local_model_validation] Validation Loader {self.val_loader}')
+        self.local_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, self.val_loader, apply="local")
         validation_end_time = time.time()
         self.local_model_validation_time = validation_end_time - validation_start_time
         print(f'Collaborator {self.input} took {self.local_model_validation_time} seconds for local validation')
