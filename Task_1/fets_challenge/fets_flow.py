@@ -8,6 +8,7 @@ import numpy as np
 import torch as pt
 import yaml
 import shutil
+import time
 
 from sys import path
 from openfl.federated import Plan
@@ -52,10 +53,14 @@ class FeTSFederatedFlow(FLSpec):
         self.fets_model = fets_model
         self.n_rounds = rounds
         self.current_round = 1
+        self.testing_coll = 0
 
     @aggregator
     def start(self):
         self.collaborators = self.runtime.collaborators
+        self.agg_tensor_dict = {}
+        self.tensor_keys_per_col = {}
+        self.restored = False
         logger.info(f'Collaborators: {self.collaborators}')
         logger.info(f'save_checkpoints: {self.save_checkpoints}')
         logger.info(f'collaborator_time_stats: {self.collaborator_time_stats}')
@@ -109,12 +114,23 @@ class FeTSFederatedFlow(FLSpec):
                                 f'do not match provided collaborators ({self.collaborator_names})')
                     exit(1)
 
+                self.restored = True
                 logger.info(f'Previous summary for round {starting_round_num}')
                 logger.info(summary)
 
                 starting_round_num += 1
-                #self.tensor_db.tensor_db = agg_tensor_db
-                self.round_number = starting_round_num
+                self.current_round = starting_round_num
+                for col,tensor_keys in self.tensor_keys_per_col.items():
+                    for tensor_key in tensor_keys:
+                        tensor_name, origin, round_number, report, tags = tensor_key
+                        #logger.info(f'Training tensor_key {tensor_key}')
+                        if 'trained' in tags:
+                            #logger.info(f'Fetching tensor {tensor_name} from tensor_db for round {round_number}')
+                            new_tags = change_tags(tags, remove_field=col)
+                            new_tensor_key = TensorKey(tensor_name, origin, round_number, report, new_tags)
+                            if tensor_name not in self.agg_tensor_dict:
+                                self.agg_tensor_dict[tensor_name] = agg_tensor_db.get_tensor_from_cache(new_tensor_key)
+                            #logger.info(f'Fetched tensor {tensor_name} from tensor_db for round {round_number}')
         self.next(self.fetch_hyper_parameters)
     
     @aggregator
@@ -136,28 +152,11 @@ class FeTSFederatedFlow(FLSpec):
             logger.warning('Hyper-parameter function warning: function returned None for "epochs_per_round". Setting "epochs_per_round" to 1')
             epochs_per_round = 1
         
-        hparam_message = "\n\tlearning rate: {}".format(learning_rate)
-
-        hparam_message += "\n\tepochs_per_round: {}".format(epochs_per_round)
-
-        logger.info("Hyper-parameters for round {}:{}".format(self.current_round, hparam_message))
-
-        # cache each tensor in the aggregator tensor_db
         self.hparam_dict = {}
-        tk = TensorKey(tensor_name='learning_rate',
-                        origin=self.uuid,
-                        round_number=self.current_round,
-                        report=False,
-                        tags=('hparam', 'model'))
-        self.hparam_dict[tk] = np.array(learning_rate)
-        tk = TensorKey(tensor_name='epochs_per_round',
-                        origin=self.uuid,
-                        round_number=self.current_round,
-                        report=False,
-                        tags=('hparam', 'model'))
-        self.hparam_dict[tk] = np.array(epochs_per_round)
+        self.hparam_dict['learning_rate'] = learning_rate
+        self.hparam_dict['epochs_per_round'] = epochs_per_round
 
-
+        print(f'Hyperparameters for round {self.current_round}: {self.hparam_dict}')
 
         # times_per_collaborator = compute_times_per_collaborator(collaborator_names,
         #                                                         training_collaborators,
@@ -165,15 +164,13 @@ class FeTSFederatedFlow(FLSpec):
         #                                                         collaborator_data_loaders,
         #                                                         collaborator_time_stats,
         #                                                         round_num)
-
-
-        if self.current_round == 1:
+        
+        if self.current_round == 1 or self.restored:
             logger.info('[Next Step] : Initializing collaborators')
             self.next(self.initialize_colls, foreach='collaborators')
         else:
             logger.info('[Next Step] : Aggregated model validation')
-            self.next(self.aggregated_model_validation, foreach='collaborators')
-        
+            self.next(self.aggregated_model_validation, foreach='collaborators')        
 
     @collaborator
     def initialize_colls(self):
@@ -194,52 +191,54 @@ class FeTSFederatedFlow(FLSpec):
         ) = create_pytorch_objects(
             gandlf_conf, train_csv=self.train_csv, val_csv=self.val_csv, device=self.device
         )
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.params = params
-        self.device = self.device
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        self.epochs = 1
+        self.fets_model.model = model
+        self.fets_model.optimizer = optimizer
+        self.fets_model.scheduler = scheduler
+        self.fets_model.params = params
+        self.fets_model.device = self.device
+        self.fets_model.train_loader = train_loader
+        self.fets_model.val_loader = val_loader
+
+        logger.info(f'Initializing tensors for collaborator {self.input}')
+        self.agg_tensor_dict = self.fets_model.get_tensor_dict(self.fets_model.model)
         self.next(self.aggregated_model_validation)
-
-    # @collaborator
-    # def init_tensors(self):
-    #     logger.info(f'Initializing tensors for collaborator {self.input}')
-    #     coll_tensor_dict = self.fets_model.get_tensor_dict(self.model)
-    #     # for key, value in coll_tensor_dict.items():
-    #     #     print(f'Adding tensor {key}')
-    #     #     print(f'Value of tensor {key} is {value}')
-
-    #     self.fets_model.rebuild_model(self.model, self.current_round, coll_tensor_dict, "cpu")
-    #     self.next(self.aggregated_model_validation)
 
     @collaborator
     def aggregated_model_validation(self):
+        validation_start_time = time.time()
         logger.info(f'Performing aggregated model validation for collaborator {self.input}')
-        self.agg_valid_dict, _ = self.fets_model.validate(self.model, self.input, self.current_round, self.val_loader, self.params, self.scheduler, apply="global")
-        #logger.info(f'{self.input} value of {self.agg_valid_dict.keys()}')
+        input_tensor_dict = deepcopy(self.agg_tensor_dict)
+        self.fets_model.rebuild_model(self.fets_model.model, self.current_round, input_tensor_dict)
+        self.agg_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, apply="global")
+        validation_end_time = time.time()
+        self.aggregated_model_validation_time = validation_end_time - validation_start_time
+        print(f'Collaborator {self.input} took {self.aggregated_model_validation_time} seconds for agg validation')
         self.next(self.train)
 
     @collaborator
     def train(self):
         logger.info(f'Performing training for collaborator {self.input}')
-        self.global_output_tensor_dict, local_output_tensor_dict =  self.fets_model.train(self.model, self.input, self.current_round, self.train_loader, self.params, self.optimizer, self.hparam_dict, self.epochs)
-        #logger.info(f'{self.input} value of {self.global_output_tensor_dict.keys()}')
+        training_start_time = time.time()
+        self.global_output_tensor_dict, _ =  self.fets_model.train(self.input, self.current_round, self.hparam_dict)
+        training_end_time = time.time()
+        self.training_time = training_end_time - training_start_time
+        print(f'Collaborator {self.input} took {self.training_time} seconds for training')
         self.next(self.local_model_validation)
 
     @collaborator
     def local_model_validation(self):
+        validation_start_time = time.time()
         logger.info(f'Performing local model validation for collaborator {self.input}')
-        self.local_valid_dict, _ = self.fets_model.validate(self.model, self.input, self.current_round, self.val_loader, self.params, self.scheduler, apply="local")
-        #logger.info(f'Doing local model validation for collaborator {self.input}:' + f' {self.local_output_dict}')
+        self.local_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, apply="local")
+        validation_end_time = time.time()
+        self.local_model_validation_time = validation_end_time - validation_start_time
+        print(f'Collaborator {self.input} took {self.local_model_validation_time} seconds for local validation')
         self.next(self.join)
 
     @aggregator
     def join(self, inputs):
+        join_start_time = time.time()
         agg_tensor_db = TensorDB()
-        tensor_keys_per_col = {}
         for idx, col in enumerate(inputs):
             logger.info(f'Aggregating results for {idx}')
             agg_out_dict = {}
@@ -252,11 +251,12 @@ class FeTSFederatedFlow(FLSpec):
             for tensor_key in agg_out_dict.keys():
                 #logger.info(f'Adding tensor key {tensor_key} to the dict of tensor keys')
                 tensor_keys.append(tensor_key)
-                tensor_keys_per_col[str(idx + 1)] = tensor_keys
+                self.tensor_keys_per_col[str(idx + 1)] = tensor_keys
 
         # [TODO] : Aggregation Function -> Collaborator Weight Dict
+        self.agg_tensor_dict = {}
         collaborator_weight_dict = {'1': 0.3333333333333333, '2': 0.3333333333333333, '3': 0.3333333333333333}
-        for col,tensor_keys in tensor_keys_per_col.items():
+        for col,tensor_keys in self.tensor_keys_per_col.items():
             for tensor_key in tensor_keys:
                 tensor_name, origin, round_number, report, tags = tensor_key
                 #logger.info(f'Aggregating tensor {tensor_name} from collaborator {origin} for round {round_number}')
@@ -268,27 +268,34 @@ class FeTSFederatedFlow(FLSpec):
                     collaborator_weight_dict,
                     aggregation_function=self.aggregation_type,
                 )
+                if 'trained' in tags and tensor_name not in self.agg_tensor_dict:
+                    logger.info(f'Fetched tensor {tensor_name} from tensor_db for round {round_number}')
+                    self.agg_tensor_dict[tensor_name] = agg_tensor_db.get_tensor_from_cache(agg_tensor_key)
                 #logger.info(f'Aggregated tensor value for tensor key {agg_tensor_key}')
 
-        agg_tensor_dict = {}
-        for col,tensor_keys in tensor_keys_per_col.items():
-            for tensor_key in tensor_keys:
-                tensor_name, origin, round_number, report, tags = tensor_key
-                #logger.info(f'Training tensor_key {tensor_key}')
-                if 'trained' in tags:
-                    #logger.info(f'Fetching tensor {tensor_name} from tensor_db for round {round_number}')
-                    new_tags = change_tags(tags, remove_field=col)
-                    new_tensor_key = TensorKey(tensor_name, origin, round_number, report, new_tags)
-                    if tensor_name not in agg_tensor_dict:
-                        agg_tensor_dict[tensor_name] = agg_tensor_db.get_tensor_from_cache(new_tensor_key)
-                        #logger.info(f'Fetched tensor {tensor_name} from tensor_db for round {round_number}')
+        
+        # for col,tensor_keys in self.tensor_keys_per_col.items():
+        #     for tensor_key in tensor_keys:
+        #         tensor_name, origin, round_number, report, tags = tensor_key
+        #         #logger.info(f'Training tensor_key {tensor_key}')
+        #         if 'trained' in tags:
+        #             #logger.info(f'Fetching tensor {tensor_name} from tensor_db for round {round_number}')
+        #             new_tags = change_tags(tags, remove_field=col)
+        #             new_tensor_key = TensorKey(tensor_name, origin, round_number, report, new_tags)
+        #             if tensor_name not in self.agg_tensor_dict:
+        #                 self.agg_tensor_dict[tensor_name] = agg_tensor_db.get_tensor_from_cache(new_tensor_key)
+        #                 #logger.info(f'Fetched tensor {tensor_name} from tensor_db for round {round_number}')
 
         # Rebuild the model with the aggregated tensor_dict
         for input in inputs:
-            logger.info(f'Updating model for collaborator {input}')
-            local_tensor_dict = deepcopy(agg_tensor_dict)
-            self.fets_model.rebuild_model(input.model, self.current_round, local_tensor_dict, "cpu")
-            local_tensor_dict = None
+            local_tensor_dict = deepcopy(self.agg_tensor_dict)
+            # [TODO] Can use input.fets_model.model instead of self.fets_model.model in rebuild_model
+            self.fets_model.optimizer = input.fets_model.optimizer
+            self.fets_model.scheduler = input.fets_model.scheduler
+            self.fets_model.params = input.fets_model.params
+            self.fets_model.device = input.fets_model.device
+            self.fets_model.model = input.fets_model.model # [TODO] - Check Optimized Way
+            self.fets_model.rebuild_model(input.fets_model.model, self.current_round, local_tensor_dict)
 
         round_loss = get_metric('valid_loss', self.current_round, agg_tensor_db)
         round_dice = get_metric('valid_dice', self.current_round, agg_tensor_db)
@@ -324,7 +331,7 @@ class FeTSFederatedFlow(FLSpec):
 
         ## CONVERGENCE METRIC COMPUTATION
         # update the auc score
-        self.best_dice_over_time_auc += self.best_dice * self.current_round
+        self.best_dice_over_time_auc += self.best_dice * self.current_round # [TODO] round_time instead of self.current_round
 
         # project the auc score as remaining time * best dice
         # this projection assumes that the current best score is carried forward for the entire week
@@ -387,6 +394,14 @@ class FeTSFederatedFlow(FLSpec):
         # (note this model has not been validated by the collaborators yet)
         # self.fets_model.rebuild_model(round_num, aggregator.last_tensor_dict, validation=True)
         self.fets_model.save_native(f'checkpoint/{self.checkpoint_folder}/temp_model.pkl')
+
+        join_end_time = time.time()
+        self.join_time = join_end_time - join_start_time
+        print(f'took {self.join_time} seconds for join_time')
+
+        for input in inputs:
+            total_time = input.aggregated_model_validation_time + input.training_time + input.local_model_validation_time + self.join_time
+            print(f'took {total_time} seconds for total training and valid')
 
         self.next(self.internal_loop)
 
