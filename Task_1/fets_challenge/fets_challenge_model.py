@@ -63,8 +63,6 @@ class FeTSChallengeModel():
         self.scheduler = None
         self.params = None
         self.device = None
-        self.train_loader = None
-        self.val_loader = None
 
         self.training_round_completed = False
         self.required_tensorkeys_for_function = {}
@@ -79,7 +77,7 @@ class FeTSChallengeModel():
         self.tensor_dict_split_fn_kwargs = {}
         self.tensor_dict_split_fn_kwargs.update({"holdout_tensor_names": ["__opt_state_needed"]})
 
-    def rebuild_model(self, model, round_num, input_tensor_dict, validation=False):
+    def rebuild_model(self, round_num, input_tensor_dict, validation=False):
         """Parse tensor names and update weights of model. Handles the
         optimizer treatment.
 
@@ -93,7 +91,7 @@ class FeTSChallengeModel():
         Returns:
             None
         """
-        self.model = model
+
         self.set_tensor_dict(input_tensor_dict, with_opt_vars=False)
 
         # if self.opt_treatment == "RESET":
@@ -152,7 +150,6 @@ class FeTSChallengeModel():
         output_tensor_dict = {}
         output_tensor_dict[TensorKey('valid_loss', origin, round_num, True, tags)] = np.array(epoch_valid_loss)
         for k, v in epoch_valid_metric.items():
-            print(f"Testing ->>>> Metric Key {k} Value {v}")
             if isinstance(v, str):
                 v = list(map(float, v.split('_')))
 
@@ -183,7 +180,6 @@ class FeTSChallengeModel():
                 TensorDB.
         """
         # handle the hparams
-        print(f"Training ->>>> Hparams {hparams_dict}")
         epochs_per_round = int(hparams_dict.pop('epochs_per_round'))
         learning_rate = float(hparams_dict.pop('learning_rate'))
 
@@ -197,7 +193,7 @@ class FeTSChallengeModel():
             group['lr'] = learning_rate
 
         for epoch in range(epochs_per_round):
-            print(f"Run %s epoch of %s round", epoch, round_num)
+            print(f"Run {epoch} of {round_num}")
             # FIXME: do we want to capture these in an array
             # rather than simply taking the last value?
             epoch_train_loss, epoch_train_metric = train_network(
@@ -212,7 +208,6 @@ class FeTSChallengeModel():
 
         metric_dict = {'loss': epoch_train_loss}
         for k, v in epoch_train_metric.items():
-            print(f"Testing ->>>> Metric Key {k} Value {v}")
             if isinstance(v, str):
                 v = list(map(float, v.split('_')))
             if np.array(v).size == 1:
@@ -252,7 +247,7 @@ class FeTSChallengeModel():
         # Return global_tensor_dict, local_tensor_dict
         return global_tensor_dict, local_tensor_dict
 
-    def get_tensor_dict(self, model, with_opt_vars=False):
+    def get_tensor_dict(self, model=None, with_opt_vars=False):
         """Return the tensor dictionary.
 
         Args:
@@ -267,6 +262,9 @@ class FeTSChallengeModel():
         # simple assignment is better
         # for now, state dict gives us names which is good
         # FIXME: do both and sanity check each time?
+
+        if model is None:
+            model = self.model
 
         state = to_cpu_numpy(model.state_dict())
 
