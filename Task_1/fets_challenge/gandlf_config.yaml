@@ -62,4 +62,4 @@ version:
   minimum: 0.0.14
 weighted_loss: true
 modality: rad
-#problem_type: classification
+problem_type: segmentation
