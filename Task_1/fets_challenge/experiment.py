@@ -17,7 +17,6 @@ from openfl.utilities.split import split_tensor_dict_for_holdouts
 from openfl.utilities import TensorKey
 from openfl.protocols import utils
 import openfl.native as fx
-from openfl.databases import TensorDB
 import torch
 
 from .gandlf_csv_adapter import construct_fedsim_csv, extract_csv_partitions
@@ -52,7 +51,8 @@ def aggregator_private_attributes(
             "training_hyper_parameters_for_round": training_hyper_parameters_for_round,
             "max_simulation_time": MAX_SIMULATION_TIME,
             "restore_from_checkpoint_folder": restore_from_checkpoint_folder,
-            "save_checkpoints":save_checkpoints
+            "save_checkpoints":save_checkpoints,
+            "checkpoint_folder":""
 }
  
 
@@ -100,7 +100,7 @@ def run_challenge_experiment(aggregation_function,
     
     print(f'Collaborator names for experiment : {collaborator_names}')
 
-    aggregation_wrapper = CustomAggregationWrapper(aggregation_function) # ---> [TODO] Set the aggregation function in the workflow
+    aggregation_wrapper = CustomAggregationWrapper(aggregation_function)
 
     # [TODO] [Workflow - API] Need to check db_store rounds
     # overrides = {
@@ -202,6 +202,4 @@ def run_challenge_experiment(aggregation_function,
     #                                          tensor_pipe=tensor_pipe)
 
     # utils.dump_proto(model_proto=model_snap, fpath=init_state_path)
-
-    #return pd.DataFrame.from_dict(experiment_results), checkpoint_folder
-    return None
+    return aggregator.private_attributes["checkpoint_folder"]
