@@ -133,9 +133,6 @@ class FeTSChallengeModel():
             mode="validation",
         )
 
-        #self.logger.info(epoch_valid_loss)
-        #self.logger.info(epoch_valid_metric)
-
         print(f"Validation loss: {epoch_valid_loss}")
         print(f"Validation metric: {epoch_valid_metric}")
 
@@ -188,9 +185,6 @@ class FeTSChallengeModel():
             round_num,
             mode="inference",
         )
-
-        print(f"Inference loss: {epoch_inference_loss}")
-        print(f"Inference metric: {epoch_inference_metric}")
 
         origin = col_name
         suffix = 'inference'

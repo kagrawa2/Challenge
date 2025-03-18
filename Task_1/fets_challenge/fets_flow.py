@@ -202,7 +202,6 @@ class FeTSFederatedFlow(FLSpec):
         self.fets_model.optimizer = optimizer
         self.fets_model.scheduler = scheduler
         self.fets_model.params = params
-        
         logger.info(f'Initializing dataloaders for collaborator {self.input}')
         collaborator_data_loaders[self.input] = FeTSDataLoader(train_loader, val_loader)
 
@@ -281,14 +280,13 @@ class FeTSFederatedFlow(FLSpec):
             cache_tensor_dict(col.local_valid_dict, agg_tensor_db, idx, agg_out_dict)
             cache_tensor_dict(col.agg_valid_dict, agg_tensor_db, idx, agg_out_dict)
             cache_tensor_dict(col.global_output_tensor_dict, agg_tensor_db, idx, agg_out_dict)
-            collaborator_task_weight[col.input] = collaborator_data_loaders[col.input].get_valid_data_size()
+            collaborator_task_weight[col.input] = collaborator_data_loaders[col.input].get_train_data_size()
 
             # Store the keys for each collaborator
             tensor_keys = []
             for tensor_key in agg_out_dict.keys():
                 tensor_keys.append(tensor_key)
                 self.tensor_keys_per_col[str(idx + 1)] = tensor_keys
-
         # [TODO] : Aggregation Function -> Collaborator Weight Dict
         self.agg_tensor_dict = {}
         # The collaborator data sizes for that task

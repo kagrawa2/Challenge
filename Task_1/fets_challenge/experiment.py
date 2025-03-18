@@ -85,16 +85,15 @@ def run_challenge_experiment(aggregation_function,
     file = Path(__file__).resolve()
     root = file.parent.resolve()  # interface root, containing command modules
     work = Path.cwd().resolve()
-
     gandlf_config_path = os.path.join(root, 'gandlf_config.yaml')
     path.append(str(root))
     path.insert(0, str(work))
     
     # create gandlf_csv and get collaborator names
     gandlf_csv_path = os.path.join(work, 'gandlf_paths.csv')
-    # split_csv_path = os.path.join(work, institution_split_csv_filename)
+    split_csv_path = os.path.join(work, institution_split_csv_filename)
     collaborator_names = construct_fedsim_csv(brats_training_data_parent_dir,
-                                              institution_split_csv_filename,
+                                              split_csv_path,
                                               0.8,
                                               gandlf_csv_path)
     
