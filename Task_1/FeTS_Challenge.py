@@ -14,7 +14,10 @@
 
 import os
 import numpy as np
-
+from fets_challenge import model_outputs_to_disc
+from pathlib import Path
+import shutil
+import glob
 from fets_challenge import run_challenge_experiment
 
 
@@ -550,6 +553,31 @@ save_checkpoints = True
 # restore_from_checkpoint_folder = 'experiment_1'
 restore_from_checkpoint_folder = None
 
+# infer participant home folder
+home = str(Path.home())
+
+#Creating working directory and copying the required csv files
+working_directory= os.path.join(home, '.local/workspace/')
+Path(working_directory).mkdir(parents=True, exist_ok=True)
+source_dir=f'{Path.cwd()}/openfl-workspace/fets_challenge_workspace/'
+pattern = "*.csv"
+source_pattern = os.path.join(source_dir, pattern)
+files_to_copy = glob.glob(source_pattern)
+
+if not files_to_copy:
+    print(f"No files found matching pattern: {pattern}")
+
+for source_file in files_to_copy:
+    destination_file = os.path.join(working_directory, os.path.basename(source_file))
+    shutil.copy2(source_file, destination_file)
+try:
+    os.chdir(working_directory)
+    print("Directory changed to:", os.getcwd())
+except FileNotFoundError:
+    print("Error: Directory not found.")
+except PermissionError:
+    print("Error: Permission denied")
+
 checkpoint_folder = run_challenge_experiment(
     aggregation_function=aggregation_function,
     choose_training_collaborators=choose_training_collaborators,
@@ -572,13 +600,6 @@ checkpoint_folder = run_challenge_experiment(
 # where \<checkpoint folder\> is the one printed to stdout during the start of the 
 # experiment (look for the log entry: "Created experiment folder experiment_##..." above).
 
-
-from fets_challenge import model_outputs_to_disc
-from pathlib import Path
-
-# infer participant home folder
-home = str(Path.home())
-
 # you will need to specify the correct experiment folder and the parent directory for
 # the data you want to run inference over (assumed to be the experiment that just completed)
 
@@ -588,14 +609,13 @@ data_path = '/home/ad_tbanda/code/fedAI/MICCAI_FeTS2022_ValidationData'
 validation_csv_filename = 'validation.csv'
 
 # you can keep these the same if you wish
-final_model_path = os.path.join('checkpoint', checkpoint_folder, 'best_model.pkl')
+final_model_path = os.path.join(working_directory, 'checkpoint', checkpoint_folder, 'best_model.pkl')
 
 # If the experiment is only run for a single round, use the temp model instead
 if not Path(final_model_path).exists():
-   final_model_path = os.path.join('checkpoint', checkpoint_folder, 'temp_model.pkl')
+   final_model_path = os.path.join(working_directory, 'checkpoint', checkpoint_folder, 'temp_model.pkl')
 
-outputs_path = os.path.join('checkpoint', checkpoint_folder, 'model_outputs')
-
+outputs_path = os.path.join(working_directory, 'checkpoint', checkpoint_folder, 'model_outputs')
 
 # Using this best model, we can now produce NIfTI files for model outputs
 # using a provided data directory

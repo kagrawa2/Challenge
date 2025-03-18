@@ -218,9 +218,7 @@ def model_outputs_to_disc(data_path,
 
     path.append(str(root))
     path.insert(0, str(work))
-    col_dir = os.path.join(work, 'openfl-workspace/fets_challenge_workspace/')
-    os.makedirs(col_dir, exist_ok=True)
-    generate_validation_csv(data_path,validation_csv, working_dir=col_dir)
+    generate_validation_csv(data_path,validation_csv, working_dir=work)
     
     # # overwrite datapath value for a single 'InferenceCol' collaborator
     # plan.cols_data_paths['InferenceCol'] = data_path
@@ -233,7 +231,7 @@ def model_outputs_to_disc(data_path,
     
     gandlf_config_path = os.path.join(root, 'gandlf_config.yaml')
     fets_model = FeTSChallengeModel(gandlf_config_path)
-    val_csv_path = os.path.join(col_dir, 'validation_paths.csv')
+    val_csv_path = os.path.join(work, 'validation_paths.csv')
     gandlf_conf = ConfigManager(gandlf_config_path)
     (
         model,
