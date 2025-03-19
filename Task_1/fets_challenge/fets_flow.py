@@ -1,26 +1,19 @@
 import os
-from copy import deepcopy
-from typing import Union
-
-import logging
-import pandas as pd
-import numpy as np
-import torch as pt
-import yaml
 import shutil
 import time
-
-from sys import path
-from openfl.federated import Plan
+import logging
+from copy import deepcopy
+import pandas as pd
 from pathlib import Path
 
 from openfl.experimental.workflow.interface import FLSpec
 from openfl.experimental.workflow.placement import aggregator, collaborator
 from openfl.databases import TensorDB
-from openfl.utilities import TaskResultKey, TensorKey, change_tags
+from openfl.utilities import TensorKey, change_tags
+
 from .fets_data_loader import FeTSDataLoader
 from .checkpoint_utils import setup_checkpoint_folder, save_checkpoint, load_checkpoint
-from .time_utils import gen_collaborator_time_stats, compute_times_per_collaborator
+from .time_utils import gen_collaborator_time_stats, compute_times_per_collaborator, MAX_SIMULATION_TIME
 
 from GANDLF.compute.generic import create_pytorch_objects
 from GANDLF.config_manager import ConfigManager
@@ -31,9 +24,7 @@ logger = logging.getLogger(__name__)
 def get_metric(metric_name, fl_round, agg_tensor_db):
     target_tags = ('metric', 'validate_agg')
     metric_tensor_key = TensorKey(metric_name, 'aggregator', fl_round, True, target_tags)
-    logger.info(f'Getting metric {metric_name} at round {fl_round} tensor key: {metric_tensor_key}')
     nparray = agg_tensor_db.get_tensor_from_cache(metric_tensor_key)
-    #logger.info(f'nparray for {metric_name} at round {fl_round}: {nparray.item()}')
     return nparray.item()
 
 def cache_tensor_dict(tensor_dict, agg_tensor_db, idx, agg_out_dict):
@@ -49,8 +40,15 @@ def cache_tensor_dict(tensor_dict, agg_tensor_db, idx, agg_out_dict):
         agg_out_dict[modified_key] = value
     agg_tensor_db.cache_tensor(agg_out_dict)
 
+def get_aggregated_dict_with_tensorname(agg_tensor_dict):
+    agg_dict_with_tensornames = {}
+    for tensor_key, value in agg_tensor_dict.items():
+        tensor_name, origin, round_number, report, tags = tensor_key
+        agg_dict_with_tensornames[tensor_name] = value
+    return agg_dict_with_tensornames
+
 class FeTSFederatedFlow(FLSpec):
-    def __init__(self, fets_model, rounds=3 , device="cpu", **kwargs):
+    def __init__(self, fets_model, params_dict, rounds=5 , device="cpu",  **kwargs):
         super().__init__(**kwargs)
         self.fets_model = fets_model
         self.n_rounds = rounds
@@ -61,11 +59,15 @@ class FeTSFederatedFlow(FLSpec):
         self.best_dice_over_time_auc = 0
         self.collaborators_chosen_each_round = {}
         self.collaborator_times_per_round = {}
-        self.times_per_collaborator = {}
         self.agg_tensor_dict = {}
         self.tensor_keys_per_col = {}
         self.restored = False
-        self.collaborator_task_weight = {}
+
+        self.include_validation_with_hausdorff = params_dict.get('include_validation_with_hausdorff', False)
+        self.choose_training_collaborators = params_dict.get('choose_training_collaborators', None)
+        self.training_hyper_parameters_for_round = params_dict.get('training_hyper_parameters_for_round', None)
+        self.restore_from_checkpoint_folder = params_dict.get('restore_from_checkpoint_folder', None)
+        self.save_checkpoints = params_dict.get('save_checkpoints', False)
 
         self.experiment_results = {
             'round':[],
@@ -127,8 +129,7 @@ class FeTSFederatedFlow(FLSpec):
                             new_tags = change_tags(tags, remove_field=col)
                             new_tensor_key = TensorKey(tensor_name, origin, round_number, report, new_tags)
                             if tensor_name not in self.agg_tensor_dict:
-                                self.agg_tensor_dict[tensor_name] = agg_tensor_db.get_tensor_from_cache(new_tensor_key)
-                            #logger.info(f'Fetched tensor {tensor_name} from tensor_db for round {round_number}')
+                                self.agg_tensor_dict[new_tensor_key] = agg_tensor_db.get_tensor_from_cache(new_tensor_key)
 
         self.collaborator_time_stats = gen_collaborator_time_stats(self.collaborator_names)
         self.next(self.fetch_parameters_for_colls)
@@ -138,10 +139,8 @@ class FeTSFederatedFlow(FLSpec):
         print("*" * 40)
         print("Starting round  {}".format(self.current_round))
         print("*" * 40)
-        logger.info('Fetching hyperparameters')
-        tensrdb = TensorDB() # [TODO] Check is it required ?
         hparams = self.training_hyper_parameters_for_round(self.collaborators,
-                                                            tensrdb._iterate(),
+                                                            None,
                                                             self.current_round,
                                                             self.collaborators_chosen_each_round,
                                                             self.collaborator_times_per_round)
@@ -160,7 +159,7 @@ class FeTSFederatedFlow(FLSpec):
 
         # pick collaborators to train for the round
         self.training_collaborators = self.choose_training_collaborators(self.collaborator_names,
-                                                                        tensrdb._iterate(),
+                                                                        None,
                                                                         self.current_round,
                                                                         self.collaborators_chosen_each_round,
                                                                         self.collaborator_times_per_round)
@@ -174,12 +173,18 @@ class FeTSFederatedFlow(FLSpec):
 
     @collaborator
     def initialize_colls(self):
+        gandlf_conf = {}
         if isinstance(self.gandlf_config, str) and os.path.exists(self.gandlf_config):
-            gandlf_conf = yaml.safe_load(open(self.gandlf_config, "r"))
+            gandlf_conf = ConfigManager(self.gandlf_config)
+        elif isinstance(self.gandlf_config, dict):
+            gandlf_conf = self.gandlf_config
+        else:
+            exit("GANDLF config file not found. Exiting...")
 
-        logger.info(gandlf_conf)
-        gandlf_conf = ConfigManager(self.gandlf_config)
+        if not self.include_validation_with_hausdorff:
+            gandlf_conf['metrics'] = ['dice','dice_per_label']
 
+        print(f'Collaborator {self.input} is training for round {self.current_round}')
         self.fets_model.device = self.device
         logger.info(f'Initializing collaborator {self.input}')
         (
@@ -199,18 +204,18 @@ class FeTSFederatedFlow(FLSpec):
         logger.info(f'Initializing dataloaders for collaborator {self.input}')
         self.collaborator_data_loader = FeTSDataLoader(train_loader, val_loader)
 
-        self.times_per_collaborator[self.input] = compute_times_per_collaborator(self.input,
-                                                                          self.training_collaborators,
-                                                                          self.hparam_dict['epochs_per_round'],
-                                                                          self.collaborator_data_loader,
-                                                                          self.collaborator_time_stats,
-                                                                          self.current_round)
+        #TODO the times per collaborator is calculated based on the random values, it doesn't look like the actual time taken by the collaborator 
+        self.times_per_collaborator = compute_times_per_collaborator(self.input,
+                                                                    self.training_collaborators,
+                                                                    self.hparam_dict['epochs_per_round'],
+                                                                    self.collaborator_data_loader,
+                                                                    self.collaborator_time_stats,
+                                                                    self.current_round)
 
-        print(f'Times per collaborator for round {self.current_round}: {self.times_per_collaborator[self.input]}')
-
+        print(f'Times per collaborator for round {self.current_round}: {self.times_per_collaborator}')
         if self.restored is False:
             self.agg_tensor_dict = self.fets_model.get_tensor_dict()
-        self.next(self.aggregated_model_validation)
+        self.next(self.join_task)
 
     @collaborator
     def aggregated_model_validation(self):
@@ -231,12 +236,12 @@ class FeTSFederatedFlow(FLSpec):
     def train(self):
         training_start_time = time.time()
 
-
         logger.info(f'Performing training for collaborator {self.input}')
         train_loader = self.collaborator_data_loader.get_train_loader()
         self.global_output_tensor_dict, _ =  self.fets_model.train(self.input, self.current_round, self.hparam_dict, train_loader)
         
-        self.collaborator_task_weight[self.input] = self.collaborator_data_loader.get_train_data_size()
+        self.collaborator_task_weight = self.collaborator_data_loader.get_train_data_size()
+        print(f'Collaborator task weight in training: {self.collaborator_task_weight}')
         training_end_time = time.time()
         self.training_time = training_end_time - training_start_time
         print(f'Collaborator {self.input} took {self.training_time} seconds for training')
@@ -255,20 +260,18 @@ class FeTSFederatedFlow(FLSpec):
         print(f'Collaborator {self.input} took {self.local_model_validation_time} seconds for local validation')
         self.next(self.join)
 
-    # @collaborator
-    # def testing_collaborator(self):
-    #     logger.info(f'Testing collaborator {self.input}')
-    #     self.next(self.join_colls)
-
-    # @aggregator
-    # def join_colls(self, inputs):
-    #     self.next(self.end)
+    @aggregator
+    def join_task(self, inputs):
+        self.next(self.internal_loop)
 
     @aggregator
     def join(self, inputs):
         join_start_time = time.time()
         self.aggregation_type.set_state_data_for_round(self.collaborators_chosen_each_round, self.collaborator_times_per_round)
-        agg_tensor_db = TensorDB() # [TODO] As tensordb cannot be used as FLSpec Attribute, should we load this tensor_db from agg_tensor_dict before checkpointing ?
+        agg_tensor_db = TensorDB()
+        cache_tensor_dict(self.agg_tensor_dict, agg_tensor_db, 0, {})
+        collaborator_weights_unnormalized = {}
+        times_per_collaborator = {}
         for idx, col in enumerate(inputs):
             logger.info(f'Aggregating results for {idx}')
             agg_out_dict = {}
@@ -281,13 +284,14 @@ class FeTSFederatedFlow(FLSpec):
             for tensor_key in agg_out_dict.keys():
                 tensor_keys.append(tensor_key)
                 self.tensor_keys_per_col[str(idx + 1)] = tensor_keys
-        self.agg_tensor_dict = {}
-        # The collaborator data sizes for that task
-        collaborator_weights_unnormalized = {
-            col.input: self.collaborator_task_weight[col.input]
-            for _, col in enumerate(inputs)
-        }
-        weight_total = sum(self.collaborator_task_weight.values())
+            #TODO : Compare the weight from the old expermient, we saw three different sets of weights while running the experiment for single round
+            # The collaborator data sizes for that task
+            collaborator_weights_unnormalized[col.input] = col.collaborator_task_weight
+            times_per_collaborator[col.input] = col.times_per_collaborator
+    
+        print(f'Collaborator task weights: {collaborator_weights_unnormalized}')
+        print(f'Collaborator times: {times_per_collaborator}')
+        weight_total = sum(collaborator_weights_unnormalized.values())
         collaborator_weight_dict = {
             k: v / weight_total for k, v in collaborator_weights_unnormalized.items()
         }
@@ -304,15 +308,7 @@ class FeTSFederatedFlow(FLSpec):
                     aggregation_function=self.aggregation_type,
                 )
                 if 'trained' in tags and tensor_name not in self.agg_tensor_dict:
-                    logger.info(f'Fetched tensor {tensor_name} from tensor_db for round {round_number}')
-                    self.agg_tensor_dict[tensor_name] = agg_tensor_db.get_tensor_from_cache(agg_tensor_key)
-                #logger.info(f'Aggregated tensor value for tensor key {agg_tensor_key}')
-
-        # Rebuild the model with the aggregated tensor_dict
-        # for input in inputs:
-        #     if self.agg_tensor_dict is not None:
-        #         local_tensor_dict = deepcopy(self.agg_tensor_dict)
-        #         input.fets_model.rebuild_model(self.current_round, local_tensor_dict)
+                    self.agg_tensor_dict[agg_tensor_key] = agg_tensor_db.get_tensor_from_cache(agg_tensor_key)
 
         round_loss = get_metric('valid_loss', self.current_round, agg_tensor_db)
         round_dice = get_metric('valid_dice', self.current_round, agg_tensor_db)
@@ -326,7 +322,7 @@ class FeTSFederatedFlow(FLSpec):
             hausdorff95_label_2 = get_metric('valid_hd95_per_label_2', self.current_round, agg_tensor_db)
             hausdorff95_label_4 = get_metric('valid_hd95_per_label_4', self.current_round, agg_tensor_db)
 
-        times_list = [(t, col) for col, t in self.times_per_collaborator.items()]
+        times_list = [(t, col) for col, t in times_per_collaborator.items()]
         times_list = sorted(times_list)
 
         # the round time is the max of the times_list
@@ -352,8 +348,8 @@ class FeTSFederatedFlow(FLSpec):
 
         # project the auc score as remaining time * best dice
         # this projection assumes that the current best score is carried forward for the entire week
-        projected_auc = (self.max_simulation_time - self.total_simulated_time) * self.best_dice + self.best_dice_over_time_auc
-        projected_auc /= self.max_simulation_time
+        projected_auc = (MAX_SIMULATION_TIME - self.total_simulated_time) * self.best_dice + self.best_dice_over_time_auc
+        projected_auc /= MAX_SIMULATION_TIME
 
         # # End of round summary
         summary = '"**** END OF ROUND {} SUMMARY *****"'.format(self.current_round)
@@ -403,7 +399,8 @@ class FeTSFederatedFlow(FLSpec):
         # in practice, this means that the previous round's model is the last model scored,
         # so a long final round should not actually benefit the competitor, since that final
         # model is never globally validated
-        if self.total_simulated_time > self.max_simulation_time:
+        # TODO : Added total time taken by running the experiment till join per round
+        if self.total_simulated_time > MAX_SIMULATION_TIME:
             logger.info("Simulation time exceeded. Ending Experiment")
             self.next(self.end)
 
@@ -418,11 +415,11 @@ class FeTSFederatedFlow(FLSpec):
             self.fets_model.params = inputs[0].fets_model.params
 
         # Rebuild the model with the aggregated tensor_dict
-        local_tensor_dict = deepcopy(self.agg_tensor_dict)
+        local_tensor_dict = get_aggregated_dict_with_tensorname(self.agg_tensor_dict)
         self.fets_model.rebuild_model(self.current_round, local_tensor_dict)
         self.fets_model.save_native(f'checkpoint/{self.checkpoint_folder}/temp_model.pkl')
 
-        # [TOOD] : Remove below logging
+        #TODO : Remove below logging
         join_end_time = time.time()
         self.join_time = join_end_time - join_start_time
         print(f'took {self.join_time} seconds for join_time')
@@ -433,13 +430,14 @@ class FeTSFederatedFlow(FLSpec):
             total_time += input.aggregated_model_validation_time + input.training_time + input.local_model_validation_time + self.join_time
 
         print(f'took {total_time} seconds for total training and valid')
-
+        #TODO cleaup aggreated tensor dict based on db store rounds, get the round number of data to be deleted, by finding round number from the dictioinary keys
         self.next(self.internal_loop)
 
     @aggregator
     def internal_loop(self):
         if self.current_round == self.n_rounds:
             print('************* EXPERIMENT COMPLETED *************')
+            # TODO : Add the average time taken for completing n_rounds
             print('Experiment results:')
             print(pd.DataFrame.from_dict(self.experiment_results))
             self.next(self.end)
