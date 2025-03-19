@@ -28,13 +28,6 @@ from GANDLF.config_manager import ConfigManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# one week
-# MINUTE = 60
-# HOUR = 60 * MINUTE
-# DAY = 24 * HOUR
-# WEEK = 7 * DAY
-MAX_SIMULATION_TIME = 7 * 24 * 60 * 60 
-
 def get_metric(metric_name, fl_round, agg_tensor_db):
     target_tags = ('metric', 'validate_agg')
     metric_tensor_key = TensorKey(metric_name, 'aggregator', fl_round, True, target_tags)
@@ -56,8 +49,6 @@ def cache_tensor_dict(tensor_dict, agg_tensor_db, idx, agg_out_dict):
         agg_out_dict[modified_key] = value
     agg_tensor_db.cache_tensor(agg_out_dict)
 
-collaborator_data_loaders = {}
-
 class FeTSFederatedFlow(FLSpec):
     def __init__(self, fets_model, rounds=3 , device="cpu", **kwargs):
         super().__init__(**kwargs)
@@ -74,6 +65,7 @@ class FeTSFederatedFlow(FLSpec):
         self.agg_tensor_dict = {}
         self.tensor_keys_per_col = {}
         self.restored = False
+        self.collaborator_task_weight = {}
 
         self.experiment_results = {
             'round':[],
@@ -174,9 +166,11 @@ class FeTSFederatedFlow(FLSpec):
                                                                         self.collaborator_times_per_round)
         
         logger.info('Collaborators chosen to train for round {}:\n\t{}'.format(self.current_round, self.training_collaborators))
-        # save the collaborators chosen this round
         self.collaborators_chosen_each_round[self.current_round] = self.training_collaborators
-        self.next(self.initialize_colls, foreach='training_collaborators')
+        if self.current_round == 1 or self.restored is True:
+            self.next(self.initialize_colls, foreach='collaborators')
+        else:
+            self.next(self.aggregated_model_validation, foreach='training_collaborators')
 
     @collaborator
     def initialize_colls(self):
@@ -203,12 +197,12 @@ class FeTSFederatedFlow(FLSpec):
         self.fets_model.scheduler = scheduler
         self.fets_model.params = params
         logger.info(f'Initializing dataloaders for collaborator {self.input}')
-        collaborator_data_loaders[self.input] = FeTSDataLoader(train_loader, val_loader)
+        self.collaborator_data_loader = FeTSDataLoader(train_loader, val_loader)
 
         self.times_per_collaborator[self.input] = compute_times_per_collaborator(self.input,
                                                                           self.training_collaborators,
                                                                           self.hparam_dict['epochs_per_round'],
-                                                                          collaborator_data_loaders[self.input],
+                                                                          self.collaborator_data_loader,
                                                                           self.collaborator_time_stats,
                                                                           self.current_round)
 
@@ -224,7 +218,7 @@ class FeTSFederatedFlow(FLSpec):
         
         logger.info(f'Performing aggregated model validation for collaborator {self.input}')
         input_tensor_dict = deepcopy(self.agg_tensor_dict)
-        val_loader = collaborator_data_loaders[self.input].get_valid_loader()
+        val_loader = self.collaborator_data_loader.get_valid_loader()
         self.fets_model.rebuild_model(self.current_round, input_tensor_dict)
         self.agg_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, val_loader, apply="global")
         
@@ -237,10 +231,12 @@ class FeTSFederatedFlow(FLSpec):
     def train(self):
         training_start_time = time.time()
 
+
         logger.info(f'Performing training for collaborator {self.input}')
-        train_loader = collaborator_data_loaders[self.input].get_train_loader()
+        train_loader = self.collaborator_data_loader.get_train_loader()
         self.global_output_tensor_dict, _ =  self.fets_model.train(self.input, self.current_round, self.hparam_dict, train_loader)
         
+        self.collaborator_task_weight[self.input] = self.collaborator_data_loader.get_train_data_size()
         training_end_time = time.time()
         self.training_time = training_end_time - training_start_time
         print(f'Collaborator {self.input} took {self.training_time} seconds for training')
@@ -251,7 +247,7 @@ class FeTSFederatedFlow(FLSpec):
         validation_start_time = time.time()
         
         logger.info(f'Performing local model validation for collaborator {self.input}')
-        val_loader = collaborator_data_loaders[self.input].get_valid_loader()
+        val_loader = self.collaborator_data_loader.get_valid_loader()
         self.local_valid_dict, _ = self.fets_model.validate(self.input, self.current_round, val_loader, apply="local")
         
         validation_end_time = time.time()
@@ -262,39 +258,36 @@ class FeTSFederatedFlow(FLSpec):
     # @collaborator
     # def testing_collaborator(self):
     #     logger.info(f'Testing collaborator {self.input}')
-    #     self.next(self.join)
+    #     self.next(self.join_colls)
 
     # @aggregator
-    # def join(self, inputs):
-    #     self.next(self.internal_loop)
+    # def join_colls(self, inputs):
+    #     self.next(self.end)
 
     @aggregator
     def join(self, inputs):
         join_start_time = time.time()
         self.aggregation_type.set_state_data_for_round(self.collaborators_chosen_each_round, self.collaborator_times_per_round)
         agg_tensor_db = TensorDB() # [TODO] As tensordb cannot be used as FLSpec Attribute, should we load this tensor_db from agg_tensor_dict before checkpointing ?
-        collaborator_task_weight = {}
         for idx, col in enumerate(inputs):
             logger.info(f'Aggregating results for {idx}')
             agg_out_dict = {}
             cache_tensor_dict(col.local_valid_dict, agg_tensor_db, idx, agg_out_dict)
             cache_tensor_dict(col.agg_valid_dict, agg_tensor_db, idx, agg_out_dict)
-            cache_tensor_dict(col.global_output_tensor_dict, agg_tensor_db, idx, agg_out_dict)
-            collaborator_task_weight[col.input] = collaborator_data_loaders[col.input].get_train_data_size()
+            cache_tensor_dict(col.global_output_tensor_dict, agg_tensor_db, idx, agg_out_dict)            
 
             # Store the keys for each collaborator
             tensor_keys = []
             for tensor_key in agg_out_dict.keys():
                 tensor_keys.append(tensor_key)
                 self.tensor_keys_per_col[str(idx + 1)] = tensor_keys
-        # [TODO] : Aggregation Function -> Collaborator Weight Dict
         self.agg_tensor_dict = {}
         # The collaborator data sizes for that task
         collaborator_weights_unnormalized = {
-            col.input: collaborator_task_weight[col.input]
+            col.input: self.collaborator_task_weight[col.input]
             for _, col in enumerate(inputs)
         }
-        weight_total = sum(collaborator_task_weight.values())
+        weight_total = sum(self.collaborator_task_weight.values())
         collaborator_weight_dict = {
             k: v / weight_total for k, v in collaborator_weights_unnormalized.items()
         }
@@ -333,13 +326,12 @@ class FeTSFederatedFlow(FLSpec):
             hausdorff95_label_2 = get_metric('valid_hd95_per_label_2', self.current_round, agg_tensor_db)
             hausdorff95_label_4 = get_metric('valid_hd95_per_label_4', self.current_round, agg_tensor_db)
 
-        #times_list = [(t, col) for col, t in self.times_per_collaborator.items()]
-        #times_list = sorted(times_list)
+        times_list = [(t, col) for col, t in self.times_per_collaborator.items()]
+        times_list = sorted(times_list)
 
         # the round time is the max of the times_list
-        round_time = 1
-        #round_time = max([t for t, _ in times_list])
-        #self.total_simulated_time += round_time
+        round_time = max([t for t, _ in times_list])
+        self.total_simulated_time += round_time
 
         if self.best_dice < round_dice:
             self.best_dice = round_dice
