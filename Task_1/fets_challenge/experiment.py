@@ -20,6 +20,9 @@ from .fets_data_loader import FeTSDataLoader
 from openfl.experimental.workflow.interface import Aggregator, Collaborator
 from openfl.experimental.workflow.runtime import LocalRuntime
 
+from GANDLF.compute.generic import create_pytorch_objects
+from GANDLF.config_manager import ConfigManager
+
 logger = getLogger(__name__)
 # This catches PyTorch UserWarnings for CPU
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -34,12 +37,14 @@ def aggregator_private_attributes(
  
 
 def collaborator_private_attributes(
-        index, gandlf_config, train_csv_path, val_csv_path):
+        index, gandlf_config, train_csv_path, val_csv_path, train_loader, val_loader):
         return {
             "index": index,
             "gandlf_config": gandlf_config,
             "train_csv_path": train_csv_path,
-            "val_csv_path": val_csv_path
+            "val_csv_path": val_csv_path,
+            "train_loader": train_loader,
+            "val_loader": val_loader,
         }
 
 
@@ -59,15 +64,19 @@ def run_challenge_experiment(aggregation_function,
     file = Path(__file__).resolve()
     root = file.parent.resolve()  # interface root, containing command modules
     work = Path.cwd().resolve()
+
+    print(f'Work path: {work}')
     gandlf_config_path = os.path.join(root, 'config', 'gandlf_config.yaml')
     
     # create gandlf_csv and get collaborator names
-    gandlf_csv_path = os.path.join(work, 'gandlf_paths.csv')
-    split_csv_path = os.path.join(work, institution_split_csv_filename)
-    collaborator_names = construct_fedsim_csv(brats_training_data_parent_dir,
-                                              split_csv_path,
-                                              0.8,
-                                              gandlf_csv_path)
+    # gandlf_csv_path = os.path.join(work, 'gandlf_paths.csv')
+    # split_csv_path = os.path.join(work, institution_split_csv_filename)
+    # collaborator_names = construct_fedsim_csv(brats_training_data_parent_dir,
+    #                                           split_csv_path,
+    #                                           0.8,
+    #                                           gandlf_csv_path)
+
+    collaborator_names = ['1', '2', '3']
     
     print(f'Collaborator names for experiment : {collaborator_names}')
 
@@ -91,6 +100,30 @@ def run_challenge_experiment(aggregation_function,
         transformed_csv_dict[col]['train'].to_csv(train_csv_path)
         transformed_csv_dict[col]['val'].to_csv(val_csv_path)
 
+
+        #gandlf_conf = {}
+        if isinstance(gandlf_config_path, str) and os.path.exists(gandlf_config_path):
+            gandlf_conf = ConfigManager(gandlf_config_path)
+        elif isinstance(gandlf_config_path, dict):
+            gandlf_conf = gandlf_config_path
+        else:
+            exit("GANDLF config file not found. Exiting...")
+
+        if not include_validation_with_hausdorff:
+            gandlf_conf['metrics'] = ['dice','dice_per_label']
+
+        logger.info(f'Initializing collaborator {col}')
+        (
+            model,
+            optimizer,
+            train_loader,
+            val_loader,
+            scheduler,
+            params,
+        ) = create_pytorch_objects(
+            gandlf_conf, train_csv=train_csv_path, val_csv=val_csv_path, device=device
+        )
+
         collaborators.append(
             Collaborator(
                 name=col,
@@ -104,7 +137,9 @@ def run_challenge_experiment(aggregation_function,
                 index=idx,
                 gandlf_config=gandlf_config_path,
                 train_csv_path=train_csv_path,
-                val_csv_path=val_csv_path
+                val_csv_path=val_csv_path,
+                train_loader=train_loader,
+                val_loader=val_loader,
             )
         )
 
@@ -142,17 +177,8 @@ def run_challenge_experiment(aggregation_function,
     # #TODO [Workflow - API] -> Commenting as pretrained model is not used.
     # ---> Define a new step in federated flow before training to load the pretrained model
     # if use_pretrained_model:
-    #     print('TESTING ->>>>>> Loading pretrained model...')
     #     if device == 'cpu':
     #         checkpoint = torch.load(f'{root}/pretrained_model/resunet_pretrained.pth',map_location=torch.device('cpu'))
-    #         print('TESTING ->>>>>> Loading checkpoint model...')
-    #         print(checkpoint.keys())
-    #         print('TESTING ->>>>>> Loading checkpoint state dict...')
-    #         model_state = checkpoint['model_state_dict']
-    #         for name, tensor in model_state.items():
-    #             print(f"Priting {name}: {tensor.shape}")
-    #         print('TESTING ->>>>>> Loading taskrunner model')
-    #         print(task_runner.model)    
     #         task_runner.model.load_state_dict(checkpoint['model_state_dict'])
     #         task_runner.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     #     else:
