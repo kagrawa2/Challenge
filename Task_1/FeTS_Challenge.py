@@ -557,26 +557,26 @@ restore_from_checkpoint_folder = None
 home = str(Path.home())
 
 #Creating working directory and copying the required csv files
-working_directory= os.path.join(home, '.local/tarunNew/')
-Path(working_directory).mkdir(parents=True, exist_ok=True)
-source_dir=f'{Path.cwd()}/partitioning_data/'
-pattern = "*.csv"
-source_pattern = os.path.join(source_dir, pattern)
-files_to_copy = glob.glob(source_pattern)
+# working_directory= os.path.join(home, '.local/tarunNew/')
+# Path(working_directory).mkdir(parents=True, exist_ok=True)
+# source_dir=f'{Path.cwd()}/partitioning_data/'
+# pattern = "*.csv"
+# source_pattern = os.path.join(source_dir, pattern)
+# files_to_copy = glob.glob(source_pattern)
 
-if not files_to_copy:
-    print(f"No files found matching pattern: {pattern}")
+# if not files_to_copy:
+#     print(f"No files found matching pattern: {pattern}")
 
-for source_file in files_to_copy:
-    destination_file = os.path.join(working_directory, os.path.basename(source_file))
-    shutil.copy2(source_file, destination_file)
-try:
-    os.chdir(working_directory)
-    print("Directory changed to:", os.getcwd())
-except FileNotFoundError:
-    print("Error: Directory not found.")
-except PermissionError:
-    print("Error: Permission denied")
+# for source_file in files_to_copy:
+#     destination_file = os.path.join(working_directory, os.path.basename(source_file))
+#     shutil.copy2(source_file, destination_file)
+# try:
+#     os.chdir(working_directory)
+#     print("Directory changed to:", os.getcwd())
+# except FileNotFoundError:
+#     print("Error: Directory not found.")
+# except PermissionError:
+#     print("Error: Permission denied")
 
 checkpoint_folder = run_challenge_experiment(
     aggregation_function=aggregation_function,
