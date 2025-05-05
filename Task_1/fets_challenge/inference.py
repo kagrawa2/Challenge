@@ -13,7 +13,6 @@ import SimpleITK as sitk
 
 import torch, torchio
 
-import openfl.native as fx
 from .gandlf_csv_adapter import construct_fedsim_csv
 from GANDLF.compute.generic import create_pytorch_objects
 from GANDLF.config_manager import ConfigManager

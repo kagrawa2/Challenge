@@ -525,7 +525,7 @@ include_validation_with_hausdorff=True
 institution_split_csv_filename = 'small_split.csv'
 
 # change this to point to the parent directory of the data
-brats_training_data_parent_dir = '/raid/datasets/FeTS22/MICCAI_FeTS2022_TrainingData'
+brats_training_data_parent_dir = '/home/ad_kagrawa2/Data/MICCAI_FeTS2022_TrainingData'
 
 # increase this if you need a longer history for your algorithms
 # decrease this if you need to reduce system RAM consumption
@@ -536,14 +536,14 @@ device = 'cpu'
 
 # you'll want to increase this most likely. You can set it as high as you like, 
 # however, the experiment will exit once the simulated time exceeds one week. 
-rounds_to_train = 5
+rounds_to_train = 1
 
 # (bool) Determines whether checkpoints should be saved during the experiment. 
 # The checkpoints can grow quite large (5-10GB) so only the latest will be saved when this parameter is enabled
 save_checkpoints = True
 
 # (str) Determines the backend process to use for the experiment.(single_process, ray)
-backend_process = 'single_process'
+backend_process = 'ray'
 
 # path to previous checkpoint folder for experiment that was stopped before completion. 
 # Checkpoints are stored in ~/.local/workspace/checkpoint, and you should provide the experiment directory
@@ -604,7 +604,7 @@ checkpoint_folder = run_challenge_experiment(
 # the data you want to run inference over (assumed to be the experiment that just completed)
 
 #data_path = </PATH/TO/CHALLENGE_VALIDATION_DATA>
-data_path = '/raid/datasets/FeTS22/MICCAI_FeTS2022_ValidationData'
+data_path = '/home/ad_kagrawa2/Data/MICCAI_FeTS2022_ValidationData'
 validation_csv_filename = 'validation.csv'
 
 # you can keep these the same if you wish

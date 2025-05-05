@@ -122,7 +122,7 @@ def run_challenge_experiment(aggregation_function,
                             db_store_rounds=db_store_rounds)
 
     local_runtime = LocalRuntime(
-        aggregator=aggregator, collaborators=collaborators, backend=backend_process, num_actors=1
+        aggregator=aggregator, collaborators=collaborators, backend=backend_process, num_actors=4
     )
 
     logger.info(f"Local runtime collaborators = {local_runtime.collaborators}")

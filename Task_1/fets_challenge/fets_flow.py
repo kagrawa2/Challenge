@@ -25,6 +25,46 @@ from GANDLF.compute.generic import create_pytorch_objects
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def save_graph(rounds, execution_times):
+    import time
+    import csv
+    import matplotlib.pyplot as plt
+    from datetime import datetime
+
+    # File to store time data
+    csv_filename = "time_data.csv"
+    image_filename = "execution_time_plot.png"  # Change to .jpg, .pdf, etc., if needed
+
+    # Write headers to the CSV file
+    with open(csv_filename, "w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Round Number", "Execution Time (seconds)"])
+
+    for i, round_number in enumerate(rounds):
+        exec_time = execution_times[i]
+        # Store data in CSV file
+        with open(csv_filename, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([round_number, exec_time])
+
+        print(f"Round Number: {round_number}, Execution Time: {exec_time:.4f} sec")
+
+    # Plot the graph
+    plt.figure(figsize=(20, 20))
+    plt.plot(rounds, execution_times, marker="o", linestyle="-", color="b", label="Execution Time")
+    plt.xlabel("Round Number")
+    plt.ylabel("Execution Time (seconds)")
+    plt.title("Execution Time Trend")
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid()
+    plt.tight_layout()
+
+    # **Save the figure**
+    plt.savefig(image_filename, dpi=300)  # Higher DPI for better quality
+
+    print(f"Graph saved as {image_filename}")
+
 # [TODO] - FixMe Dataloaders cannot be passed as private attributes of collaborator.
 # This is a temporary workaround to store the dataloaders in a global variable.
 collaborator_data_loaders = {}
@@ -54,6 +94,9 @@ class FeTSFederatedFlow(FLSpec):
         # GaNDLF config
         self.gandlf_config = params_dict.get('gandlf_config', None)
 
+        self.timestamp = []
+        self.execution_times = []
+
         self.experiment_results = {
             'round':[],
             'time': [],
@@ -64,6 +107,9 @@ class FeTSFederatedFlow(FLSpec):
             'dice_label_2': [],
             'dice_label_4': [],
         }
+
+        self.init_time = time.time()
+        logger.info(f'[BENCHMARKING] Experiment started at {self.init_time}')
 
     def _get_metric(self, metric_name, fl_round, agg_tensor_db):
         tensor_key = TensorKey(metric_name, 'aggregator', fl_round, True, ('metric', 'validate_agg'))
@@ -310,7 +356,12 @@ class FeTSFederatedFlow(FLSpec):
     def fetch_parameters_for_colls(self):
         print("*" * 40)
         print("Starting round  {}".format(self.current_round))
+        self.round_start_time = time.time()
         print("*" * 40)
+        print(f'[BENCHMARKING] Round {self.current_round} started at {self.round_start_time}')
+        print("*" * 40)
+
+
         hparams = self.training_hyper_parameters_for_round(self.collaborators,
                                                             None,
                                                             self.current_round,
@@ -501,6 +552,17 @@ class FeTSFederatedFlow(FLSpec):
 
         # Update the aggregator model and rebuild it with aggregated tensors
         self._update_aggregator_model(inputs)
+
+        print('************* ROUND COMPLETED *************')
+        round_end_time = time.time()
+        logger.info(f'***********************************')
+        logger.info(f'[BENCHMARKING] Round {self.current_round} took {round_end_time - self.round_start_time} seconds')
+        logger.info(f'***********************************')
+        print('************* ROUND COMPLETED *************')
+        exec_time = round_end_time - self.round_start_time
+        self.timestamp.append(self.current_round)
+        self.execution_times.append(exec_time)
+
         self.next(self.internal_loop)
 
     @aggregator
@@ -516,6 +578,9 @@ class FeTSFederatedFlow(FLSpec):
 
     @aggregator
     def end(self):
+        experiment_end_time = time.time()
         logger.info('********************************')
+        logger.info(f'[BENCHMARKING] Experiment for {self.n_rounds} rounds took {experiment_end_time - self.init_time} seconds')
+        save_graph(self.timestamp, self.execution_times)
         logger.info('End of flow')
         logger.info('********************************')
